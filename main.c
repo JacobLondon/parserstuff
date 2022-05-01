@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,17 +56,25 @@ static void node_insert(Token token)
 	nodes[node_ndx++] = (Node){token, NULL, NULL};
 }
 
+#define NODE_FOR_EACH_SIBLING(nodename, root, BLOCK) \
+do { \
+	for (Node *nodename = root; nodename; nodename = nodename->sibling) { \
+		BLOCK \
+	} \
+} while (0)
+
 static void node_puts(Node *node, int depth)
 {
 	if (!node) {
+		printf("%*cNULL\n", 2 * depth, ' ');
 		return;
 	}
 
-	for (Node *current = node; current; current = current->sibling) {
+	NODE_FOR_EACH_SIBLING(current, node, {
 		if (depth > 0) printf("%*c", 2 * depth, ' ');
 		token_puts(&current->token);
-		node_puts(node->children, depth + 1);
-	}
+		node_puts(current->children, depth + 1);
+	});
 }
 
 // build a tree from the node, returning the root
@@ -77,7 +86,8 @@ static Node *node_recurse(Node *node)
 	// highest precedence first
 	for (int id = _tok_end_ops - 1; id > _tok_begin_ops; id--) {
 		Node *next = NULL;
-		for (Node *current = root; current; current = current->sibling) {
+		Node *previous = NULL;
+		for (Node *current = root; current; previous = current, current = current->sibling) {
 
 			// all infix operators (postfix needs to not check for next->sibling != NULL)
 			next = current->sibling;
@@ -90,18 +100,20 @@ static Node *node_recurse(Node *node)
 				 * next->sibling is val2
 				 */
 				Node *val1 = current;
-				Node *op = next;
-				Node *val2 = next->sibling;
+				Node *op = val1->sibling;
+				Node *val2 = op->sibling;
 
 				switch (id) {
 				case TOK_ADD: // fallthrough
 				case TOK_MUL: // fallthrough
 				case TOK_POW:
+					assert(op->children == NULL);
 					op->children = val1;
 					val1->sibling = val2;
 					op->sibling = val2->sibling;
 					val2->sibling = NULL;
 					current = op;
+					if (previous) previous->sibling = current;
 					break;
 				default:
 					MISSING();
@@ -121,14 +133,16 @@ static Node *node_recurse(Node *node)
 				 * next is val
 				 */
 				Node *op = current;
-				Node *val = next;
+				Node *val = op->sibling;
 
 				switch (id) {
 				case TOK_UNARY:
+					assert(op->children == NULL);
 					op->children = val;
 					op->sibling = val->sibling;
 					val->sibling = NULL;
 					current = op;
+					if (previous) previous->sibling = current;
 					break;
 				//case TOK_LPAREN:
 				// recurse()
@@ -225,7 +239,10 @@ int main(int argc, char **argv)
 
 	Tokenizer tokenizer;
 	Token current;
-	char *test = "abs 55 + 2 ** 3 * 4";
+	char *test =
+		//"abs 55 + 2 ** 3 * 4"
+		"55 + 2 * 3"
+	;
 
 	printf("%s\n", test);
 	tokenizer_init(test, strlen(test), gettok, &tokenizer);
@@ -245,14 +262,16 @@ int main(int argc, char **argv)
 		node_insert(current);
 	}
 
-	node_puts(nodes, 0);
-
 	if (node_ndx == 0) {
 		printf("No tokens found\n");
 		exit(1);
 	}
+
+	node_puts(nodes, 0);
 	printf("---------------------\n");
 	Node *root = node_recurse(&nodes[0]);
+
+	printf("Dump / recurse everything:\n");
 	node_puts(root, 0);
 
 	tokenizer_cleanup(&tokenizer);
